@@ -1,0 +1,7 @@
+project:
+  type: website
+  output-dir: docs # very important for getting the website to display properly when you use GitHub Pages
+
+website:
+  title: "A Quarto Website"
+
