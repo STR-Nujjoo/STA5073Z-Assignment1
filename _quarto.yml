@@ -8,7 +8,7 @@ website:
     left:
       - href: Assignment1_Tanweer.qmd
         text: "Report"
-      - href: docs/plagiarism_declaration.pdf
+      - href: plagiarism_declaration.pdf
         text: "Plagiarism Declaration"
       - href: https://github.com/STR-Nujjoo/STA5073Z-Assignment1
         text: "Github"
