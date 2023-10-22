@@ -6,19 +6,13 @@ abstract: |
 
 bibliography: bibliography.bib
 format:
-   pdf: 
-       toc: true
-       extra_dependencies: ["float"]
-       header-includes:
-            - \usepackage{hyperref}
-            - \usepackage{graphicx}
-            - \usepackage[labelfont=bf]{caption}
-            - \captionsetup[table]{font=scriptsize}
-            - \captionsetup[figure]{font=scriptsize}
-            - \usepackage{vmargin}  # Adjust the margin width here
-            - \setmarginsrb{2 cm}{0.5 cm}{2 cm}{1 cm}{1 cm}{1 cm}{1 cm}{1 cm}
-       fig-pos: 'H'
-       fig-format: pdf
+   html:
+      toc: true
+      toc-location: left
+      toc-title: Contents
+      embed-resources: true
+      number-sections: true
+      fig-pos: '!ht'
 editor: source
 
 ---
@@ -29,9 +23,14 @@ library(tidyverse)
 library(tidytext)
 library(textstem)
 library(textdata)
-library(tm)
 library(knitr)
 library(keras)
+library(tensorflow)
+library(caret)
+library(mltools)
+library(e1071)
+library(glmnet)
+library(xtable)
 ```
 
 ```{r extract, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
@@ -113,21 +112,14 @@ sona <-sona %>%
          ,date = str_replace_all(date, '--', '')
   )
 
-# Set speech to lower case + lemmatize
-sona <- sona %>%
-  mutate(speech = lemmatize_strings(tolower(speech)))
- 
 sona <- as_tibble(sona) # convert dataframe to tibble
 sona <- sona[,-1] # removing first column
 
 unnest_reg <- "[^\\w_#@']"
 
-# Remove common SONA words that are used very regularly, but which don't convey too much meaning
-common_sona_reg <- 'speaker|madame|honourable|chairperson|development|national|ensure|deputy|africa|african|africans|south|southern|government|people|programme|economic|economy|country|continue'
-
 ```
 
-\newpage
+
 # Introduction 
 
 This is the introduction. To cover: what is `SONA` and what is its purpose? What was the assignment task? What was the motivation?
@@ -135,7 +127,7 @@ This is the introduction. To cover: what is `SONA` and what is its purpose? What
 # Materials and Methods
 *Summary of data-set and data cleaning methods used. How the data was read in, parsed.*
 
-#### Brief Overview of SONA dataset
+## Brief Overview of SONA dataset
 
 @fig-number_of_speeches_per_presidents...
 
@@ -148,9 +140,15 @@ barplot(table(sona$president_13),
 
 ```
 
-#### Data Pre-processing
+```{r tidy sona, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
+sona <- sona %>%
+  filter(!president_13 %in% c("deKlerk", "Motlanthe"))
+```
 
-#### Data Exploration
+
+## Data Pre-processing
+
+## Data Exploration
 
 ```{r Top 20 words used by each of the presidents, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
 # PER PRESIDENT COMMON WORDS ANALYSIS -------------------------------------
@@ -160,7 +158,6 @@ common_words_Mandela <- sona %>%
   unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg) %>%
   filter(str_detect(word, '[a-z]')) %>% 
   filter(!word %in% stop_words$word) %>%
-  filter(!grepl(common_sona_reg, word)) %>%
   count(word, sort = T) %>%
   slice(1:20) %>%
   #filter(rank(desc(n)) <= 20) %>%
@@ -174,7 +171,6 @@ common_words_Mbeki <- sona %>%
   unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg) %>%
   filter(str_detect(word, '[a-z]')) %>% 
   filter(!word %in% stop_words$word) %>%
-  filter(!grepl(common_sona_reg, word)) %>%
   count(word, sort = T) %>%
   slice(1:20) %>%
   #filter(rank(desc(n)) <= 20) %>%
@@ -188,7 +184,6 @@ common_words_Zuma <- sona %>%
   unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg) %>%
   filter(str_detect(word, '[a-z]')) %>% 
   filter(!word %in% stop_words$word) %>%
-  filter(!grepl(common_sona_reg, word)) %>%
   count(word, sort = T) %>%
   slice(1:20) %>%
   #filter(rank(desc(n)) <= 20) %>%
@@ -202,7 +197,6 @@ common_words_Ramaphosa<- sona %>%
   unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg) %>%
   filter(str_detect(word, '[a-z]')) %>% 
   filter(!word %in% stop_words$word) %>%
-  filter(!grepl(common_sona_reg, word)) %>%
   count(word, sort = T) %>%
   slice(1:20) %>%
   #filter(rank(desc(n)) <= 20) %>%
@@ -223,14 +217,842 @@ cowplot::plot_grid(common_words_Mandela, common_words_Mbeki,
   theme(plot.background = element_rect(color = "black", linewidth = 2))
 ```
 
-@Garnier2007
-[@Garnier2007]
+
+
+
+@Garnier2007 sjgsflkjlsknn jk kdfd kfkfl.
+FDLGDFLKdfkjnslfgj jglfkjl kfjgl kg lk [@Garnier2007].
 
 # Results & Discussions
 
+```{r Dataset variations, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
+# Tokenise by sentence
+sona_sentences <- sona %>% 
+  unnest_tokens(sentence, speech, token = 'sentences', to_lower = T) %>%
+  dplyr::select(sentence, president_13, year) 
+
+# Add a sentence id column
+sona_sentences$Sid <- 1:nrow(sona_sentences)
+
+# Find 200 most frequent word
+word_bag_200 <- sona %>% 
+  unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg, to_lower = T) %>%
+  filter(stringr::str_detect(word, '[a-z]')) %>%
+  filter(!word %in% stop_words$word) %>%
+  count(word)%>%
+  top_n(200, wt = n) %>%
+  select(-n)
+
+# Bag of words model: Calculate number of times each of top 200 words was used in each sentence
+# Drop any words from each sentence with none of the 200 top words.
+bow_200 <- sona_sentences %>%
+  unnest_tokens(word, sentence, token = 'regex', pattern = unnest_reg, to_lower = T) %>%
+  filter(!word %in% stop_words$word, str_detect(word, '[a-z]')) %>%
+  inner_join(word_bag_200) %>%
+  group_by(Sid, word) %>%
+  count() %>%
+  ungroup() %>%
+  left_join(sona_sentences %>% select(president_13, Sid)) %>% # bring back president corresponding to sentence id
+  pivot_wider(names_from = word, values_from = n, values_fill = 0) %>%
+  mutate(Pid = as.integer(factor(president_13))-1) %>% # Mandela = 0, Mbeki = 1, Ramaphosa = 2, Zuma = 3
+  select(Pid, everything()) %>%
+  select(-Sid)
+
+set.seed(1)
+bow_200 <- bow_200[sample(nrow(bow_200)),] # shuffle rows to make dataset more random
+
+# table(bow_200$president_13)
+# str(bow_200)
+
+# Upsampled bag of words model
+US_bow_200 <- as_tibble(upSample(bow_200, factor(bow_200$president_13)))
+set.seed(1)
+US_bow_200 <- US_bow_200[sample(nrow(US_bow_200)),] # shuffle rows to make dataset more random
+
+# table(US_bow_200$president_13)
+# str(US_bow_200)
+# head(US_bow_200)
+
+# Downsampled bag of words model
+DS_bow_200 <- as_tibble(downSample(bow_200, factor(bow_200$president_13)))
+set.seed(1)
+DS_bow_200 <- DS_bow_200[sample(nrow(DS_bow_200)),] # shuffle rows to make dataset more random
+# table(DS_bow_200$president_13)
+# str(DS_bow_200)
+
+#######################################################################################################################
+# Applying tf-idf on the bag of words model
+tfidf_200 <- sona_sentences %>%
+  unnest_tokens(word, sentence, token = 'regex', pattern = unnest_reg, to_lower = T) %>%
+  filter(!word %in% stop_words$word, str_detect(word, '[a-z]')) %>%
+  inner_join(word_bag_200) %>%
+  group_by(Sid, word) %>%
+  count() %>%
+  ungroup() %>%
+  left_join(sona_sentences %>% select(president_13, Sid)) %>% # bring back president corresponding to sentence id
+  bind_tf_idf(word, Sid, n) %>%
+  pivot_wider(names_from = word, values_from = tf_idf, values_fill = 0) %>%
+  mutate(Pid = as.integer(factor(president_13))-1) %>% # Mandela = 0, Mbeki = 1, Ramaphosa = 2, Zuma = 3
+  select(Pid, everything()) %>%
+  select(-Sid, -n, -tf, -idf)
+
+set.seed(1)
+tfidf_200 <- tfidf_200[sample(nrow(tfidf_200)),] # shuffle rows to make dataset more random
+
+
+# table(tfidf_200$president_13)
+# str(tfidf_200)
+
+# Upsampled tf-idf model
+US_tfidf_200 <- as_tibble(upSample(tfidf_200, factor(tfidf_200$president_13)))
+set.seed(1)
+US_tfidf_200 <- US_tfidf_200[sample(nrow(US_tfidf_200)),] # shuffle rows to make dataset more random
+# table(US_tfidf_200$president_13)
+# str(US_tfidf_200)
+
+# Downsampled tf-idf model
+DS_tfidf_200 <- as_tibble(downSample(tfidf_200, factor(tfidf_200$president_13)))
+set.seed(1)
+DS_tfidf_200 <- DS_tfidf_200[sample(nrow(DS_tfidf_200)),] # shuffle rows to make dataset more random
+# table(DS_tfidf_200$president_13)
+# str(DS_tfidf_200)
+```
+
+```{r Data splits for all models, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
+
+# NEURAL NETWORK DATA PREP
+# Fit NN on original bag of words model -----------------------------------
+# Preprocessing for NN model
+bow_200_target <- bow_200$Pid
+bow_200_features <- as.matrix(bow_200[,-c(1:2)])
+
+# Split data into train and test ------------------------------------------
+# Determine sample size
+set.seed(1)
+ind <-  sample(1:2, nrow(bow_200), replace=TRUE, prob=c(0.7, 0.3))
+
+# Split features
+x_train_bow_200 <- bow_200_features[ind==1, ]
+x_test_bow_200 <- bow_200_features[ind==2, ]
+str(x_train_bow_200)
+# Split target
+y_train_bow_200 <- bow_200_target[ind==1]
+y_test_bow_200 <- bow_200_target[ind==2]
+
+# Scale dataset -----------------------------------------------------------
+x_train_bow_200 <- scale(x_train_bow_200)
+
+# Scale test data based on training data means and std devs
+x_test_bow_200 <- scale(x_test_bow_200, center = attr(x_train_bow_200, "scaled:center"), 
+                scale = attr(x_train_bow_200, "scaled:scale"))
+
+# One hot encoding --------------------------------------------------------
+y_train_bow_200 <- to_categorical(y_train_bow_200)
+y_test_bow_200_original <- y_test_bow_200
+y_test_bow_200 <- to_categorical(y_test_bow_200)
+
+#######################################################################################################################
+# Fit NN on upsampled bag of words model ----------------------------------
+# Preprocessing for NN model
+US_bow_200_target <- US_bow_200$Pid
+US_bow_200_features <- as.matrix(US_bow_200[,-c(1:2,203)])
+
+# Split data into train and test ------------------------------------------
+# Determine sample size
+set.seed(1)
+ind <-  sample(1:2, nrow(US_bow_200), replace=TRUE, prob=c(0.7, 0.3))
+
+# Split features
+x_train_US_bow_200 <- US_bow_200_features[ind==1, ]
+x_test_US_bow_200 <- US_bow_200_features[ind==2, ]
+str(x_train_US_bow_200)
+# Split target
+y_train_US_bow_200 <- US_bow_200_target[ind==1]
+y_test_US_bow_200 <- US_bow_200_target[ind==2]
+
+# Scale dataset -----------------------------------------------------------
+x_train_US_bow_200 <- scale(x_train_US_bow_200)
+
+# Scale test data based on training data means and std devs
+x_test_US_bow_200 <- scale(x_test_US_bow_200, center = attr(x_train_US_bow_200, "scaled:center"), 
+                        scale = attr(x_train_US_bow_200, "scaled:scale"))
+
+# One hot encoding --------------------------------------------------------
+y_train_US_bow_200 <- to_categorical(y_train_US_bow_200)
+y_test_US_bow_200_original <- y_test_US_bow_200
+y_test_US_bow_200 <- to_categorical(y_test_US_bow_200)
+
+#######################################################################################################################
+# Fit NN on downsampled bag of words model ----------------------------------
+# Preprocessing for NN model
+DS_bow_200_target <- DS_bow_200$Pid
+DS_bow_200_features <- as.matrix(DS_bow_200[,-c(1:2,203)])
+
+# Split data into train and test ------------------------------------------
+# Determine sample size
+set.seed(1)
+ind <-  sample(1:2, nrow(DS_bow_200), replace=TRUE, prob=c(0.7, 0.3))
+
+# Split features
+x_train_DS_bow_200 <- DS_bow_200_features[ind==1, ]
+x_test_DS_bow_200 <- DS_bow_200_features[ind==2, ]
+str(x_train_DS_bow_200)
+# Split target
+y_train_DS_bow_200 <- DS_bow_200_target[ind==1]
+y_test_DS_bow_200 <- DS_bow_200_target[ind==2]
+
+# Scale dataset -----------------------------------------------------------
+x_train_DS_bow_200 <- scale(x_train_DS_bow_200)
+
+# Scale test data based on training data means and std devs
+x_test_DS_bow_200 <- scale(x_test_DS_bow_200, center = attr(x_train_DS_bow_200, "scaled:center"), 
+                           scale = attr(x_train_DS_bow_200, "scaled:scale"))
+
+# One hot encoding --------------------------------------------------------
+y_train_DS_bow_200 <- to_categorical(y_train_DS_bow_200)
+y_test_DS_bow_200_original <- y_test_DS_bow_200
+y_test_DS_bow_200 <- to_categorical(y_test_DS_bow_200)
+
+############################################################################################################################
+# Fit NN on original tfidf bag of words model -----------------------------
+# Preprocessing for NN model
+tfidf_200_target <- tfidf_200$Pid
+tfidf_200_features <- as.matrix(tfidf_200[,-c(1:2)])
+
+# Split data into train and test ------------------------------------------
+# Determine sample size
+set.seed(1)
+ind <-  sample(1:2, nrow(tfidf_200), replace=TRUE, prob=c(0.7, 0.3))
+
+# Split features
+x_train_tfidf_200 <- tfidf_200_features[ind==1, ]
+x_test_tfidf_200 <- tfidf_200_features[ind==2, ]
+
+# Split target
+y_train_tfidf_200 <- tfidf_200_target[ind==1]
+y_test_tfidf_200 <- tfidf_200_target[ind==2]
+
+# Scale dataset -----------------------------------------------------------
+x_train_tfidf_200 <- scale(x_train_tfidf_200)
+
+# Scale test data based on training data means and std devs
+x_test_tfidf_200 <- scale(x_test_tfidf_200, center = attr(x_train_tfidf_200, "scaled:center"), 
+                        scale = attr(x_train_tfidf_200, "scaled:scale"))
+
+# One hot encoding --------------------------------------------------------
+y_train_tfidf_200 <- to_categorical(y_train_tfidf_200)
+y_test_tfidf_200_original <- y_test_tfidf_200
+y_test_tfidf_200 <- to_categorical(y_test_tfidf_200)
+
+#######################################################################################################################
+# Fit NN on upsampled tfidf bag of words model ----------------------------
+# Preprocessing for NN model
+US_tfidf_200_target <- US_tfidf_200$Pid
+US_tfidf_200_features <- as.matrix(US_tfidf_200[,-c(1:2,203)])
+
+# Split data into train and test ------------------------------------------
+# Determine sample size
+set.seed(1)
+ind <-  sample(1:2, nrow(US_tfidf_200), replace=TRUE, prob=c(0.7, 0.3))
+
+# Split features
+x_train_US_tfidf_200 <- US_tfidf_200_features[ind==1, ]
+x_test_US_tfidf_200 <- US_tfidf_200_features[ind==2, ]
+str(x_train_US_tfidf_200)
+# Split target
+y_train_US_tfidf_200 <- US_tfidf_200_target[ind==1]
+y_test_US_tfidf_200 <- US_tfidf_200_target[ind==2]
+
+# Scale dataset -----------------------------------------------------------
+x_train_US_tfidf_200 <- scale(x_train_US_tfidf_200)
+
+# Scale test data based on training data means and std devs
+x_test_US_tfidf_200 <- scale(x_test_US_tfidf_200, center = attr(x_train_US_tfidf_200, "scaled:center"), 
+                           scale = attr(x_train_US_tfidf_200, "scaled:scale"))
+
+# One hot encoding --------------------------------------------------------
+y_train_US_tfidf_200 <- to_categorical(y_train_US_tfidf_200)
+y_test_US_tfidf_200_original <- y_test_US_tfidf_200
+y_test_US_tfidf_200 <- to_categorical(y_test_US_tfidf_200)
+
+#######################################################################################################################
+# Fit NN on downsampled tfidf bag of words model ----------------------------
+# Preprocessing for NN model
+DS_tfidf_200_target <- DS_tfidf_200$Pid
+DS_tfidf_200_features <- as.matrix(DS_tfidf_200[,-c(1:2,203)])
+
+# Split data into train and test ------------------------------------------
+# Determine sample size
+set.seed(1)
+ind <-  sample(1:2, nrow(DS_tfidf_200), replace=TRUE, prob=c(0.7, 0.3))
+
+# Split features
+x_train_DS_tfidf_200 <- DS_tfidf_200_features[ind==1, ]
+x_test_DS_tfidf_200 <- DS_tfidf_200_features[ind==2, ]
+str(x_train_DS_tfidf_200)
+# Split target
+y_train_DS_tfidf_200 <- DS_tfidf_200_target[ind==1]
+y_test_DS_tfidf_200 <- DS_tfidf_200_target[ind==2]
+
+# Scale dataset -----------------------------------------------------------
+x_train_DS_tfidf_200 <- scale(x_train_DS_tfidf_200)
+
+# Scale test data based on training data means and std devs
+x_test_DS_tfidf_200 <- scale(x_test_DS_tfidf_200, center = attr(x_train_DS_tfidf_200, "scaled:center"), 
+                             scale = attr(x_train_DS_tfidf_200, "scaled:scale"))
+
+# One hot encoding --------------------------------------------------------
+y_train_DS_tfidf_200 <- to_categorical(y_train_DS_tfidf_200)
+y_test_DS_tfidf_200_original <- y_test_DS_tfidf_200
+y_test_DS_tfidf_200 <- to_categorical(y_test_DS_tfidf_200)
+
+#######################################################################################################################
+# MULTINOMIAL LOGISTIC REGRESSION DATA PREP
+# MLR model on original bag of words model --------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(bow_200), size = nrow(bow_200)*0.7, replace = F)
+train_bow_200 <- bow_200[ind,-2] # 70% training set
+train_bow_200$Pid <- as.factor(train_bow_200$Pid) # convert target variable to factor for training set
+test_bow_200 <- bow_200[-ind,-2] # 30% training set
+test_bow_200$Pid <- as.factor(test_bow_200$Pid) # convert target variable to factor for test set
+
+# convert predictor variables into a matrix/array as glmnet only accepts this data type as input
+X_train_bow_200 <- as.matrix(train_bow_200[,-1])
+# convert response variable into a matrix/array as glmnet only accepts matrix data type as input
+Y_train_bow_200 <- as.matrix(train_bow_200[,1])
+
+X_test_bow_200 <- as.matrix(test_bow_200[,-1])
+
+##############################################################################################################################
+# MLR model on upsampled bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(US_bow_200), size = nrow(US_bow_200)*0.7, replace = F)
+train_US_bow_200 <- US_bow_200[ind,-c(2,203)] # 70% training set
+train_US_bow_200$Pid <- as.factor(train_US_bow_200$Pid) # convert target variable to factor for training set
+test_US_bow_200 <- US_bow_200[-ind,-c(2,203)] # 30% training set
+test_US_bow_200$Pid <- as.factor(test_US_bow_200$Pid) # convert target variable to factor for test set
+
+# convert predictor variables into a matrix/array as glmnet only accepts this data type as input
+X_train_US_bow_200 <- as.matrix(train_US_bow_200[,-1])
+# convert response variable into a matrix/array as glmnet only accepts matrix data type as input
+Y_train_US_bow_200 <- as.matrix(train_US_bow_200[,1])
+
+X_test_US_bow_200 <- as.matrix(test_US_bow_200[,-1])
+
+##############################################################################################################################
+# MLR model on downsampled bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(DS_bow_200), size = nrow(DS_bow_200)*0.7, replace = F)
+train_DS_bow_200 <- DS_bow_200[ind,-c(2,203)] # 70% training set
+train_DS_bow_200$Pid <- as.factor(train_DS_bow_200$Pid) # convert target variable to factor for training set
+test_DS_bow_200 <- DS_bow_200[-ind,-c(2,203)] # 30% training set
+test_DS_bow_200$Pid <- as.factor(test_DS_bow_200$Pid) # convert target variable to factor for test set
+
+# convert predictor variables into a matrix/array as glmnet only accepts this data type as input
+X_train_DS_bow_200 <- as.matrix(train_DS_bow_200[,-1])
+# convert response variable into a matrix/array as glmnet only accepts matrix data type as input
+Y_train_DS_bow_200 <- as.matrix(train_DS_bow_200[,1])
+
+X_test_DS_bow_200 <- as.matrix(test_DS_bow_200[,-1])
+
+##############################################################################################################################
+# MLR model on original tfidf bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(tfidf_200), size = nrow(tfidf_200)*0.7, replace = F)
+train_tfidf_200 <- tfidf_200[ind,-2] # 70% training set
+train_tfidf_200$Pid <- as.factor(train_tfidf_200$Pid) # convert target variable to factor for training set
+test_tfidf_200 <- tfidf_200[-ind,-2] # 30% training set
+test_tfidf_200$Pid <- as.factor(test_tfidf_200$Pid) # convert target variable to factor for test set
+
+# convert predictor variables into a matrix/array as glmnet only accepts this data type as input
+X_train_tfidf_200 <- as.matrix(train_tfidf_200[,-1])
+# convert response variable into a matrix/array as glmnet only accepts matrix data type as input
+Y_train_tfidf_200 <- as.matrix(train_tfidf_200[,1])
+
+X_test_tfidf_200 <- as.matrix(test_tfidf_200[,-1])
+
+##############################################################################################################################
+# MLR model on upsampled tfidf bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(US_tfidf_200), size = nrow(US_tfidf_200)*0.7, replace = F)
+train_US_tfidf_200 <- US_tfidf_200[ind,-c(2,203)] # 70% training set
+train_US_tfidf_200$Pid <- as.factor(train_US_tfidf_200$Pid) # convert target variable to factor for training set
+test_US_tfidf_200 <- US_tfidf_200[-ind,-c(2,203)] # 30% training set
+test_US_tfidf_200$Pid <- as.factor(test_US_tfidf_200$Pid) # convert target variable to factor for test set
+
+# convert predictor variables into a matrix/array as glmnet only accepts this data type as input
+X_train_US_tfidf_200 <- as.matrix(train_US_tfidf_200[,-1])
+# convert response variable into a matrix/array as glmnet only accepts matrix data type as input
+Y_train_US_tfidf_200 <- as.matrix(train_US_tfidf_200[,1])
+
+X_test_US_tfidf_200 <- as.matrix(test_US_tfidf_200[,-1])
+
+##############################################################################################################################
+# MLR model on downsampled tfidf bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(DS_tfidf_200), size = nrow(DS_tfidf_200)*0.7, replace = F)
+train_DS_tfidf_200 <- DS_tfidf_200[ind,-c(2,203)] # 70% training set
+train_DS_tfidf_200$Pid <- as.factor(train_DS_tfidf_200$Pid) # convert target variable to factor for training set
+test_DS_tfidf_200 <- DS_tfidf_200[-ind,-c(2,203)] # 30% training set
+test_DS_tfidf_200$Pid <- as.factor(test_DS_tfidf_200$Pid) # convert target variable to factor for test set
+
+# convert predictor variables into a matrix/array as glmnet only accepts this data type as input
+X_train_DS_tfidf_200 <- as.matrix(train_DS_tfidf_200[,-1])
+# convert response variable into a matrix/array as glmnet only accepts matrix data type as input
+Y_train_DS_tfidf_200 <- as.matrix(train_DS_tfidf_200[,1])
+
+X_test_DS_tfidf_200 <- as.matrix(test_DS_tfidf_200[,-1])
+
+##############################################################################################################################
+# SUPPORT VECTOR MACHINE DATA PREP
+# SVM model on original bag of words model --------------------------------
+set.seed(1)
+ind <- sample(1:nrow(bow_200), size = nrow(bow_200)*0.7, replace = F)
+train_bow_200 <- bow_200[ind,-2] # 70% training set
+train_bow_200$Pid <- as.factor(train_bow_200$Pid) # convert target variable to factor for training set
+test_bow_200 <- bow_200[-ind,-2] # 30% training set
+test_bow_200$Pid <- as.factor(test_bow_200$Pid) # convert target variable to factor for test set
+
+##############################################################################################################################
+# SVM model on upsampled bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(US_bow_200), size = nrow(US_bow_200)*0.7, replace = F)
+train_US_bow_200 <- US_bow_200[ind,-c(2,203)] # 70% training set
+train_US_bow_200$Pid <- as.factor(train_US_bow_200$Pid) # convert target variable to factor for training set
+test_US_bow_200 <- US_bow_200[-ind,-c(2,203)] # 30% training set
+test_US_bow_200$Pid <- as.factor(test_US_bow_200$Pid) # convert target variable to factor for test set
+
+##############################################################################################################################
+# SVM model on downsampled bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(DS_bow_200), size = nrow(DS_bow_200)*0.7, replace = F)
+train_DS_bow_200 <- DS_bow_200[ind,-c(2,203)] # 70% training set
+train_DS_bow_200$Pid <- as.factor(train_DS_bow_200$Pid) # convert target variable to factor for training set
+test_DS_bow_200 <- DS_bow_200[-ind,-c(2,203)] # 30% training set
+test_DS_bow_200$Pid <- as.factor(test_DS_bow_200$Pid) # convert target variable to factor for test set
+
+##############################################################################################################################
+# SVM model on original tfidf bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(tfidf_200), size = nrow(tfidf_200)*0.7, replace = F)
+train_tfidf_200 <- tfidf_200[ind,-2] # 70% training set
+train_tfidf_200$Pid <- as.factor(train_tfidf_200$Pid) # convert target variable to factor for training set
+test_tfidf_200 <- tfidf_200[-ind,-2] # 30% training set
+test_tfidf_200$Pid <- as.factor(test_tfidf_200$Pid) # convert target variable to factor for test set
+
+##############################################################################################################################
+# SVM model on upsampled tfidf bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(US_tfidf_200), size = nrow(US_tfidf_200)*0.7, replace = F)
+train_US_tfidf_200 <- US_tfidf_200[ind,-c(2,203)] # 70% training set
+train_US_tfidf_200$Pid <- as.factor(train_US_tfidf_200$Pid) # convert target variable to factor for training set
+test_US_tfidf_200 <- US_tfidf_200[-ind,-c(2,203)] # 30% training set
+test_US_tfidf_200$Pid <- as.factor(test_US_tfidf_200$Pid) # convert target variable to factor for test set
+
+##############################################################################################################################
+# SVM model on downsampled tfidf bag of words model -------------------------------
+# randomly splitting data
+set.seed(1)
+ind <- sample(1:nrow(DS_tfidf_200), size = nrow(DS_tfidf_200)*0.7, replace = F)
+train_DS_tfidf_200 <- DS_tfidf_200[ind,-c(2,203)] # 70% training set
+train_DS_tfidf_200$Pid <- as.factor(train_DS_tfidf_200$Pid) # convert target variable to factor for training set
+test_DS_tfidf_200 <- DS_tfidf_200[-ind,-c(2,203)] # 30% training set
+test_DS_tfidf_200$Pid <- as.factor(test_DS_tfidf_200$Pid) # convert target variable to factor for test set
+
+```
+
+```{r Neural network skeletons, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
+# Neural Network Model ----------------------------------------------------
+set.seed(1)
+# create empty model
+model_bow_200 <- keras_model_sequential()
+
+# define model
+model_bow_200 %>% 
+  layer_dense(units = 500, activation = 'tanh', input_shape = c(200)) %>% 
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 300, activation = 'tanh') %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 4, activation = 'softmax')
+
+#summary(model_bow_200)
+
+# compile model
+model_bow_200 %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_adam(learning_rate = 0.01),
+  metrics = c('accuracy'),
+)
+
+#################
+# Neural Network Model ----------------------------------------------------
+set.seed(1)
+# create empty model
+model_US_bow_200 <- keras_model_sequential()
+
+# define model
+model_US_bow_200 %>% 
+  layer_dense(units = 500, activation = 'tanh', input_shape = c(200)) %>% 
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 300, activation = 'tanh') %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 4, activation = 'softmax')
+
+#summary(model_US_bow_200)
+
+# compile model
+model_US_bow_200 %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_adam(learning_rate = 0.01),
+  metrics = c('accuracy'),
+)
+########################
+# Neural Network Model ----------------------------------------------------
+set.seed(1)
+# create empty model
+model_DS_bow_200 <- keras_model_sequential()
+
+# define model
+model_DS_bow_200 %>% 
+  layer_dense(units = 500, activation = 'tanh', input_shape = c(200)) %>% 
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 300, activation = 'tanh') %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 4, activation = 'softmax')
+
+#summary(model_DS_bow_200)
+
+# compile model
+model_DS_bow_200 %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_adam(learning_rate = 0.01),
+  metrics = c('accuracy'),
+)
+#####################
+# Neural Network Model ----------------------------------------------------
+set.seed(1)
+# create empty model
+model_tfidf_200 <- keras_model_sequential()
+
+# define model
+model_tfidf_200 %>% 
+  layer_dense(units = 500, activation = 'tanh', input_shape = c(200)) %>% 
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 300, activation = 'tanh') %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 4, activation = 'softmax')
+
+#summary(model_tfidf_200)
+
+# compile model
+model_tfidf_200 %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_adam(learning_rate = 0.01),
+  metrics = c('accuracy'),
+)
+
+################
+# Neural Network Model ----------------------------------------------------
+set.seed(1)
+# create empty model
+model_US_tfidf_200 <- keras_model_sequential()
+
+# define model
+model_US_tfidf_200 %>% 
+  layer_dense(units = 500, activation = 'tanh', input_shape = c(200)) %>% 
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 300, activation = 'tanh') %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 4, activation = 'softmax')
+
+#summary(model_US_tfidf_200)
+
+# compile model
+model_US_tfidf_200 %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_adam(learning_rate = 0.01),
+  metrics = c('accuracy'),
+)
+################
+# Neural Network Model ----------------------------------------------------
+set.seed(1)
+# create empty model
+model_DS_tfidf_200 <- keras_model_sequential()
+
+# define model
+model_DS_tfidf_200 %>% 
+  layer_dense(units = 500, activation = 'tanh', input_shape = c(200)) %>% 
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 300, activation = 'tanh') %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 4, activation = 'softmax')
+
+#summary(model_DS_tfidf_200)
+
+# compile model
+model_DS_tfidf_200 %>% compile(
+  loss = 'categorical_crossentropy',
+  optimizer = optimizer_adam(learning_rate = 0.01),
+  metrics = c('accuracy'),
+)
+
+```
+
+```{r Load all 18 models and SVM predictions, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
+load("Rdata/NN_bow_200.Rdata")
+load("Rdata/NN_US_bow_200.Rdata")
+load("Rdata/NN_DS_bow_200.Rdata")
+load("Rdata/NN_tfidf_200.Rdata")
+load("Rdata/NN_US_tfidf_200.Rdata")
+load("Rdata/NN_DS_tfidf_200.Rdata")
+load("Rdata/MLR_bow_200.Rdata")
+load("Rdata/MLR_US_bow_200.Rdata")
+load("Rdata/MLR_DS_bow_200.Rdata")
+load("Rdata/MLR_tfidf_200.Rdata")
+load("Rdata/MLR_US_tfidf_200.Rdata")
+load("Rdata/MLR_DS_tfidf_200.Rdata")
+load("Rdata/SVM_bow_200.Rdata")
+load("Rdata/SVM_US_bow_200.Rdata")
+load("Rdata/SVM_DS_bow_200.Rdata")
+load("Rdata/SVM_tfidf_200.Rdata")
+load("Rdata/SVM_US_tfidf_200.Rdata")
+load("Rdata/SVM_DS_tfidf_200.Rdata")
+
+load("Rdata/SVM_predictions.Rdata")
+```
+
+```{r Evalution metrics of all the models, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
+# NEURAL NETWORK EVALUATION METRICS
+############# 1
+#plot(history_bow_200)
+NN_bow_200_train_accuracy <- mean(history_bow_200$metrics$accuracy) # training accuracy of NN on original BOW model
+NN_bow_200_val_accuracy <- mean(history_bow_200$metrics$val_accuracy) # validation accuracy of NN on original BOW model
+# model evaluation
+NN_bow_200_test_accuracy <- model_bow_200 %>% evaluate(x_test_bow_200, y_test_bow_200) # test accuracy of NN on original BOW model
+
+
+# confusion matrix
+y_test_bow_200_hat <- model_bow_200 %>% predict(x_test_bow_200) %>% k_argmax() %>% as.numeric()
+#table(y_test_bow_200_original, y_test_bow_200_hat)
+
+# Matthew's correlation coefficient
+MCC_bow_200 <- mcc(preds = y_test_bow_200_hat, actuals = y_test_bow_200_original)
+
+############# 2
+#plot(history_US_bow_200)
+NN_US_bow_200_train_accuracy <- mean(history_US_bow_200$metrics$accuracy) # training accuracy of NN on upsampled BOW model
+NN_US_bow_200_val_accuracy <- mean(history_US_bow_200$metrics$val_accuracy) # validation accuracy of NN on upsampled BOW model
+
+# model evaluation
+NN_US_bow_200_test_accuracy <- model_US_bow_200 %>% evaluate(x_test_US_bow_200, y_test_US_bow_200) # test accuracy of NN on upsampled BOW model
+
+# confusion matrix
+y_test_US_bow_200_hat <- model_US_bow_200 %>% predict(x_test_US_bow_200) %>% k_argmax() %>% as.numeric()
+#table(y_test_US_bow_200_original, y_test_US_bow_200_hat)
+
+############# 3
+#plot(history_DS_bow_200)
+NN_DS_bow_200_train_accuracy <- mean(history_DS_bow_200$metrics$accuracy) # training accuracy of NN on downsampled BOW model
+NN_DS_bow_200_val_accuracy <- mean(history_DS_bow_200$metrics$val_accuracy)  # validation accuracy of NN on downsampled BOW model
+
+# model evaluation
+NN_DS_bow_200_test_accuracy <- model_DS_bow_200 %>% evaluate(x_test_DS_bow_200, y_test_DS_bow_200) # test accuracy of NN on downsampled BOW model
+
+# confusion matrix
+y_test_DS_bow_200_hat <- model_DS_bow_200 %>% predict(x_test_DS_bow_200) %>% k_argmax() %>% as.numeric()
+#table(y_test_DS_bow_200_original, y_test_DS_bow_200_hat)
+
+############# 4
+#plot(history_tfidf_200)
+NN_tfidf_200_train_accuracy <- mean(history_tfidf_200$metrics$accuracy) # training accuracy of NN on original tfidf model
+NN_tfidf_200_val_accuracy <- mean(history_tfidf_200$metrics$val_accuracy) # validation accuracy of NN on original tfidf model
+
+
+# model evaluation
+NN_tfidf_200_test_accuracy <- model_tfidf_200 %>% evaluate(x_test_tfidf_200, y_test_tfidf_200) # test accuracy of NN on original tfidf model
+
+# confusion matrix
+y_test_tfidf_200_hat <- model_tfidf_200 %>% predict(x_test_tfidf_200) %>% k_argmax() %>% as.numeric()
+#table(y_test_tfidf_200_original, y_test_tfidf_200_hat)
+
+# Matthew's correlation coefficient
+MCC_tfidf_200 <- mcc(preds = y_test_tfidf_200_hat, actuals = y_test_tfidf_200_original)
+
+############# 5
+#plot(history_US_tfidf_200)
+NN_US_tfidf_200_train_accuracy <- mean(history_US_tfidf_200$metrics$accuracy) # training accuracy of NN on upsampled tfidf model
+NN_US_tfidf_200_val_accuracy <- mean(history_US_tfidf_200$metrics$val_accuracy) # validation accuracy of NN on upsampled tfidf model
+
+# model evaluation
+NN_US_tfidf_200_test_accuracy <- model_US_tfidf_200 %>% evaluate(x_test_US_tfidf_200, y_test_US_tfidf_200) # test accuracy of NN on upsampled tfidf model
+
+# confusion matrix
+y_test_US_tfidf_200_hat <- model_US_tfidf_200 %>% predict(x_test_US_tfidf_200) %>% k_argmax() %>% as.numeric()
+#table(y_test_US_tfidf_200_original, y_test_US_tfidf_200_hat)
+
+############# 6
+#plot(history_DS_tfidf_200)
+NN_DS_tfidf_200_train_accuracy <- mean(history_DS_tfidf_200$metrics$accuracy) # training accuracy of NN on downsampled tfidf model
+NN_DS_tfidf_200_val_accuracy <- mean(history_DS_tfidf_200$metrics$val_accuracy) # validation accuracy of NN on downsampled tfidf model
+
+# model evaluation
+NN_DS_tfidf_200_test_accuracy <- model_DS_tfidf_200 %>% evaluate(x_test_DS_tfidf_200, y_test_DS_tfidf_200) # test accuracy of NN on upsampled tfidf model
+
+# confusion matrix
+y_test_DS_tfidf_200_hat <- model_DS_tfidf_200 %>% predict(x_test_DS_tfidf_200) %>% k_argmax() %>% as.numeric()
+#table(y_test_DS_tfidf_200_original, y_test_DS_tfidf_200_hat)
+
+################################################################################
+# MULTINOMIAL LOGISTIC REGRESSION EVALUATION METRICS
+############# 1
+mlr_bow_200_train_accuracy <- mean(predict(bow_200_mlr, 
+                                     newx = X_train_bow_200, 
+                                     s = cv_lasso_bow_200_mlr$lambda.min, 
+                                     type = 'class') == train_bow_200$Pid) # training accuracy
+
+mlr_bow_200_test_accuracy <- mean(predict(bow_200_mlr, 
+                                           newx = X_test_bow_200, 
+                                           s = cv_lasso_bow_200_mlr$lambda.min, 
+                                           type = 'class') == test_bow_200$Pid) # test accuracy
+
+# Matthew's correlation coefficient
+bow_200_mlr_mcc <- mcc(preds = as.numeric(predict(bow_200_mlr, 
+                                       newx = X_test_bow_200, 
+                                       s = cv_lasso_bow_200_mlr$lambda.min, 
+                                       type = 'class')),
+                       actuals = as.numeric(test_bow_200$Pid)) # MCC
+############# 2
+mlr_US_bow_200_train_accuracy <- mean(predict(US_bow_200_mlr, 
+                                           newx = X_train_US_bow_200, 
+                                           s = cv_lasso_US_bow_200_mlr$lambda.min, 
+                                           type = 'class') == train_US_bow_200$Pid) # training accuracy
+
+mlr_US_bow_200_test_accuracy <- mean(predict(US_bow_200_mlr, 
+                                          newx = X_test_US_bow_200, 
+                                          s = cv_lasso_US_bow_200_mlr$lambda.min, 
+                                          type = 'class') == test_US_bow_200$Pid) # test accuracy
+
+############# 3
+mlr_DS_bow_200_train_accuracy <- mean(predict(DS_bow_200_mlr, 
+                                              newx = X_train_DS_bow_200, 
+                                              s = cv_lasso_DS_bow_200_mlr$lambda.min, 
+                                              type = 'class') == train_DS_bow_200$Pid) # training accuracy
+
+mlr_DS_bow_200_test_accuracy <- mean(predict(DS_bow_200_mlr, 
+                                             newx = X_test_DS_bow_200, 
+                                             s = cv_lasso_DS_bow_200_mlr$lambda.min, 
+                                             type = 'class') == test_DS_bow_200$Pid) # test accuracy
+
+############# 4
+mlr_tfidf_200_train_accuracy <- mean(predict(tfidf_200_mlr, 
+                                           newx = X_train_tfidf_200, 
+                                           s = cv_lasso_tfidf_200_mlr$lambda.min, 
+                                           type = 'class') == train_tfidf_200$Pid) # training accuracy
+
+mlr_tfidf_200_test_accuracy <- mean(predict(tfidf_200_mlr, 
+                                          newx = X_test_tfidf_200, 
+                                          s = cv_lasso_tfidf_200_mlr$lambda.min, 
+                                          type = 'class') == test_tfidf_200$Pid) # test accuracy
+
+# Matthew's correlation coefficient
+tfidf_200_mlr_mcc <- mcc(preds = as.numeric(predict(tfidf_200_mlr, 
+                                                  newx = X_test_tfidf_200, 
+                                                  s = cv_lasso_tfidf_200_mlr$lambda.min, 
+                                                  type = 'class')),
+                       actuals = as.numeric(test_tfidf_200$Pid)) # MCC
+
+############# 5
+mlr_US_tfidf_200_train_accuracy <- mean(predict(US_tfidf_200_mlr, 
+                                              newx = X_train_US_tfidf_200, 
+                                              s = cv_lasso_US_tfidf_200_mlr$lambda.min, 
+                                              type = 'class') == train_US_tfidf_200$Pid) # training accuracy
+
+mlr_US_tfidf_200_test_accuracy <- mean(predict(US_tfidf_200_mlr, 
+                                             newx = X_test_US_tfidf_200, 
+                                             s = cv_lasso_US_tfidf_200_mlr$lambda.min, 
+                                             type = 'class') == test_US_tfidf_200$Pid) # test accuracy
+
+############# 6
+mlr_DS_tfidf_200_train_accuracy <- mean(predict(DS_tfidf_200_mlr, 
+                                                newx = X_train_DS_tfidf_200, 
+                                                s = cv_lasso_DS_tfidf_200_mlr$lambda.min, 
+                                                type = 'class') == train_DS_tfidf_200$Pid) # training accuracy
+
+mlr_DS_tfidf_200_test_accuracy <- mean(predict(DS_tfidf_200_mlr, 
+                                               newx = X_test_DS_tfidf_200, 
+                                               s = cv_lasso_DS_tfidf_200_mlr$lambda.min, 
+                                               type = 'class') == test_DS_tfidf_200$Pid) # test accuracy
+
+################################################################################
+# SUPPORT VECTOR MACHINE EVALUATION METRICS
+############# 1
+svm_bow_200_train_accuracy <- mean(svm_bow_200_trainpred == train_bow_200$Pid)
+svm_bow_200_test_accuracy <- mean(svm_bow_200_testpred == test_bow_200$Pid)
+svm_bow_200_mcc <-  mcc(preds = as.numeric(svm_bow_200_testpred),
+                        actuals = as.numeric(test_bow_200$Pid))
+############# 2
+svm_US_bow_200_train_accuracy <- mean(svm_US_bow_200_trainpred == train_US_bow_200$Pid)
+svm_US_bow_200_test_accuracy <- mean(svm_US_bow_200_testpred == test_US_bow_200$Pid)
+
+############# 3
+svm_DS_bow_200_train_accuracy <- mean(svm_DS_bow_200_trainpred == train_DS_bow_200$Pid)
+svm_DS_bow_200_test_accuracy <- mean(svm_DS_bow_200_testpred == test_DS_bow_200$Pid)
+
+############# 4
+svm_tfidf_200_train_accuracy <- mean(svm_tfidf_200_trainpred == train_tfidf_200$Pid)
+svm_tfidf_200_test_accuracy <- mean(svm_tfidf_200_testpred == test_tfidf_200$Pid)
+svm_tfidf_200_mcc <-  mcc(preds = as.numeric(svm_tfidf_200_testpred),
+                        actuals = as.numeric(test_tfidf_200$Pid))
+############# 5
+svm_US_tfidf_200_train_accuracy <- mean(svm_US_tfidf_200_trainpred == train_US_tfidf_200$Pid)
+svm_US_tfidf_200_test_accuracy <- mean(svm_US_tfidf_200_testpred == test_US_tfidf_200$Pid)
+
+############# 6
+svm_DS_tfidf_200_train_accuracy <- mean(svm_DS_tfidf_200_trainpred == train_DS_tfidf_200$Pid)
+svm_DS_tfidf_200_test_accuracy <- mean(svm_DS_tfidf_200_testpred == test_DS_tfidf_200$Pid)
+
+```
+
+```{r evaluation_metrics_df, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
+
+Model <-  c("NN<sub>tanh+softmax</sub>: Original BOW", "NN<sub>tanh+softmax</sub>: US BOW", "NN<sub>tanh+softmax</sub>: DS BOW", "NN<sub>tanh+softmax</sub>: Original TF-IDF (BOW)", "NN<sub>tanh+softmax</sub>: US TF-IDF (BOW)", "NN<sub>tanh+softmax</sub>: DS TF-IDF (BOW)", " ",
+                                "MLR<sub>L1</sub>: Original BOW", "MLR<sub>L1</sub>: US BOW","MLR<sub>L1</sub>: DS BOW", "MLR<sub>L1</sub>: Original TF-IDF (BOW)", "MLR<sub>L1</sub>: US TF-IDF (BOW)", "MLR<sub>L1</sub>: DS TF-IDF (BOW)", " ",
+                                "SVM<sub>radial</sub>: Original BOW", "SVM<sub>radial</sub>: US BOW", "SVM<sub>radial</sub>: DS BOW", "SVM<sub>radial</sub>: Original TF-IDF (BOW)", "SVM<sub>radial</sub>: US TF-IDF (BOW)", "SVM<sub>radial</sub>: DS TF-IDF (BOW)")
+
+MCC <-  c(round(MCC_bow_200, 3), "-", "-", round(MCC_tfidf_200,3), "-", "-", " ", round(bow_200_mlr_mcc,3), "-", "-", round(tfidf_200_mlr_mcc, 3), "-", "-", " ", round(svm_bow_200_mcc,3), "-", "-", round(svm_tfidf_200_mcc,3), "-", "-")
+
+Train_acc <- c(round(NN_bow_200_train_accuracy,3), round(NN_US_bow_200_train_accuracy,3), round(NN_DS_bow_200_train_accuracy,3), round(NN_tfidf_200_train_accuracy,3), round(NN_US_tfidf_200_train_accuracy,3), round(NN_DS_tfidf_200_train_accuracy,3), " ", round(mlr_bow_200_train_accuracy,3), round(mlr_US_bow_200_train_accuracy,3), round(mlr_DS_bow_200_train_accuracy,3), round(mlr_tfidf_200_train_accuracy,3), round(mlr_US_tfidf_200_train_accuracy,3), round(mlr_DS_tfidf_200_train_accuracy,3), " ", round(svm_bow_200_train_accuracy,3), round(svm_US_bow_200_train_accuracy,3), round(svm_DS_bow_200_train_accuracy,3), round(svm_tfidf_200_train_accuracy,3), round(svm_US_tfidf_200_train_accuracy,3), round(svm_DS_tfidf_200_train_accuracy,3))
+           
+Test_acc <- c(round(NN_bow_200_test_accuracy[[2]],3), round(NN_US_bow_200_test_accuracy[[2]],3), round(NN_DS_bow_200_test_accuracy[[2]],3), round(NN_tfidf_200_test_accuracy[[2]],3), round(NN_US_tfidf_200_test_accuracy[[2]],3), round(NN_DS_tfidf_200_test_accuracy[[2]],3), " ", round(mlr_bow_200_test_accuracy,3), round(mlr_US_bow_200_test_accuracy,3), round(mlr_DS_bow_200_test_accuracy,3), round(mlr_tfidf_200_test_accuracy,3), round(mlr_US_tfidf_200_test_accuracy,3), round(mlr_DS_tfidf_200_test_accuracy,3), " ", round(svm_bow_200_test_accuracy,3), round(svm_US_bow_200_test_accuracy,3), round(svm_DS_bow_200_test_accuracy,3))
+
+results <- cbind(Model, MCC, Train_acc, Test_acc)
+colnames(results) <- c("Model", "MCC", "Training Accuracy", "Test Accuracy")
+
+
+```
+
+```{r tbl-evaluation_metrics_table, echo=FALSE}
+#| label: tbl-evaluation_metrics_table
+#| tbl-cap: "Topic Summaries"
+#| tbl-colwidths: [40, 20, 20, 20]
+kable(results, align = "lccc")
+```
+
+@tbl-evaluation_metrics_table
+
 # Conclusion
 
-# References
+# References {.unnumbered}
 
 
 
