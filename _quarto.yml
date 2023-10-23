@@ -8,10 +8,10 @@ website:
     left:
       - href: Assignment1_Tanweer.qmd
         text: "Report"
-      - href: plagiarism_declaration.pdf
+      - href: https://github.com/STR-Nujjoo/STA5073Z-Assignment1/blob/main/plagiarism_declaration.pdf
         text: "Plagiarism Declaration"
       - href: https://github.com/STR-Nujjoo/STA5073Z-Assignment1
-        text: "Github"
+        text: "Github Repo"
 
 format:
   html:

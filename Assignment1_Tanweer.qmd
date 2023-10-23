@@ -1,8 +1,8 @@
 ---
 author: Tanweer Nujjoo
-title: Prediction of South African Presidents from their SONA Speeches
+title: Prediction of South African Presidents from their SONA Speeches using NN, MLR & SVM
 abstract: |
-  Summary of motivation and outcome. Start with context, task and object, finish with findings and conclusion. This is written last.
+ The annual State of the Nation Address (SONA) in South Africa serves as a critical national update by the President, delivered to Parliament. The main aims of this project were to predict the presidents from their speeches, where the input datasets were prepared into 6 variations namely, bag of words (BOW), up-sampled bag of words (US BOW), down-sampled bag of words (DS BOW), TF-IDF on bag of words (TF-IDF (BOW)), up-sampled TF-IDF on bag of words (US TF-IDF (BOW)) and down-sampled TF-IDF on bag of words (DS TF-IDF (BOW)). A feedforward neural network (NN), multinomial logistic regression (MLR) and support vector machine (SVM) were utilised to model the 6 dataset variations, which led to producing 18 different models. The models were evaluated on 3 metrics namely matthews correlation coefficient (MCC), training accuracy and test accuracy. The MCC of the SVM on the BOW model was the best. The overall results were extremely poor and the NN were the worst performer. SVM and MLR had similar accuracies. All the models performed better on the non TF-IDF dataset variations and all the DS TF-IDF (BOW) had the worst accuracies. 
 
 bibliography: bibliography.bib
 format:
@@ -12,7 +12,7 @@ format:
       toc-title: Contents
       embed-resources: true
       number-sections: true
-      fig-pos: '!ht'
+      #fig-pos: '!ht'
 editor: source
 
 ---
@@ -122,16 +122,28 @@ unnest_reg <- "[^\\w_#@']"
 
 # Introduction 
 
-This is the introduction. To cover: what is `SONA` and what is its purpose? What was the assignment task? What was the motivation?
+The State of the Nation Address (SONA) of the President of South Africa is an annual event in which the President of South Africa reports on the status of the nation, normally to the resumption of a joint sitting of Parliament. Various key issues are addressed in present time plus other strategies and priorities to solve related matters for the upcoming year. So, in years that elections took place, a SONA happens twice, once before and again after the election. The data obtained for this task contained the full text of all SONA speeches, from 1994 through to 2023 (see @sec-SONA_overview for an overview of the dataset).
+
+
+## Objectives
+
+**The main goals for this project are:**
+
+* To construct at least three predictive models that take a sentence of text as input and return a prediction of which president was the source of that sentence. 
+
+* To apply the predictive models on a variety of data manipulated models such as bag of words (BOW) and term frequency-inverse document frequency (TF-IDF).
+
+* To evaluate each predictive model while performing a comparative analysis. 
 
 # Materials and Methods
-*Summary of data-set and data cleaning methods used. How the data was read in, parsed.*
 
-## Brief Overview of SONA dataset
+This section describes thoroughly the procedures undertaken to conduct the predictive modelling using the content of speeches. The entire implementation of this task was performed using RStudio, therefore the functions and libraries used throughout the process corresponds to R. However, the equivalence of this analysis can definitely be replicated on other programming platforms. There are various ways to wrangle data and only the "not so obvious" functions were explained in this report. It should be further noted that all the plots produced in this report were generated either via the `plot()` function from `base R` or the `ggplot()` function from the `ggplot2` library.
 
-@fig-number_of_speeches_per_presidents...
+## Brief Overview of SONA dataset {#sec-SONA_overview}
 
-```{r fig-number_of_speeches_per_presidents, message=FALSE, warning=FALSE, results='hide', echo=FALSE, fig.align='center', fig.cap="Number of speeches made by each president during the SONA events between 1994 to 2023.", fig.width = 8, fig.height = 5}
+Since 1994 until 2023, South Africa has had 6 presidents governing the country namely, Mandela [1994-1999], deKlerk [1994], Mbeki [2000-2008], Motlanthe [2009], Zuma [2009-2017], and Ramaphosa [2018-2023] accumulated 36 speeches throughout the years. As depicted in @fig-number_of_speeches_per_presidents the number of speeches are very imbalanced especially for deKlerk and Motlanthe, which explained by their 1-term presidency. Due to this fact, their speeches were **removed from the dataset** such that they would not contribute as noise in the learning process of the models.
+
+```{r fig-number_of_speeches_per_presidents, message=FALSE, warning=FALSE, results='hide', echo=FALSE, fig.align='center', fig.cap="Number of speeches made by each president during the SONA events from 1994 to 2023.", fig.width = 8, fig.height = 4}
 
 barplot(table(sona$president_13), 
         col= c("chocolate", "deeppink3", "steelblue", "darkcyan", "darkgreen", "magenta4"),
@@ -145,8 +157,9 @@ sona <- sona %>%
   filter(!president_13 %in% c("deKlerk", "Motlanthe"))
 ```
 
+## Data Pre-processing & cleaning
 
-## Data Pre-processing
+Raw data retrieval tends to always be messy. Based on the nature of the SONA dataset retrived being semi-structured and not ideal for analysis, it was therefore, pre-processed into meaningful tabular form where each attribute (**speech**, **year**, **president**) represented a unique entity (for e.g, "*Madame Speaker and Deputy Speaker, President of the Senate and...*", *1994*, *Mandela*, respectively). That was done by extracting the years and presidents' names from the filenames using string manipulation functions. In addition, all the unnecessary regular expressions like "**(http.?(...)|(www.?(\\s|**" from the speeches were also removed. All those manipulations were done using the `stringr` library.
 
 ## Data Exploration
 
@@ -155,7 +168,7 @@ sona <- sona %>%
 # Most common words used per president ------------------------------------
 common_words_Mandela <- sona %>% 
   filter(president_13 == 'Mandela') %>%
-  unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg) %>%
+  unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg, to_lower = T) %>%
   filter(str_detect(word, '[a-z]')) %>% 
   filter(!word %in% stop_words$word) %>%
   count(word, sort = T) %>%
@@ -168,7 +181,7 @@ common_words_Mandela <- sona %>%
 
 common_words_Mbeki <- sona %>% 
   filter(president_13 == 'Mbeki') %>%
-  unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg) %>%
+  unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg,  to_lower = T) %>%
   filter(str_detect(word, '[a-z]')) %>% 
   filter(!word %in% stop_words$word) %>%
   count(word, sort = T) %>%
@@ -181,7 +194,7 @@ common_words_Mbeki <- sona %>%
 
 common_words_Zuma <- sona %>% 
   filter(president_13 == 'Zuma') %>%
-  unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg) %>%
+  unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg,  to_lower = T) %>%
   filter(str_detect(word, '[a-z]')) %>% 
   filter(!word %in% stop_words$word) %>%
   count(word, sort = T) %>%
@@ -194,7 +207,7 @@ common_words_Zuma <- sona %>%
 
 common_words_Ramaphosa<- sona %>% 
   filter(president_13 == 'Ramaphosa') %>%
-  unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg) %>%
+  unnest_tokens(word, speech, token = 'regex', pattern = unnest_reg, to_lower = T) %>%
   filter(str_detect(word, '[a-z]')) %>% 
   filter(!word %in% stop_words$word) %>%
   count(word, sort = T) %>%
@@ -207,9 +220,11 @@ common_words_Ramaphosa<- sona %>%
 
 ```
 
-@fig-top_20_words_PP...
+To perform exploratory data analysis on any text related scenario, it is almost always necessary to split the words into several columns where each word or group of words becomes the attribute. This process is called **tokenisation**. Tokenisation is the split of a sequence of characters in a text by locating the word boundaries [@palmer2000tokenisation]. Now, the atomicity by which the split is performed would obviously be pursuant to a specific objective and could be in terms of per characters, per words, per n-grams, per sentences and more. As this paper did not delve deep into sentiment analysis, but rather a very general exploration, the tokenisation per words satisfied our purpose. That was simply done using the `unnest_tokens()` function from the `tidytext` library. On a side note, n-gram is a terminology very well known in the world of natural language processing (NLP), and it simply refers to a sequence of n words. If n=1, it is referred to as a unigram, if n=2, it is referred to as a bigram and if n=3, it is referred to as a trigram.
 
-```{r fig-top_20_words_PP, message=FALSE, warning=FALSE, results='hide', echo=FALSE, fig.align='center', fig.cap="Top 20 words used by each presidents. **A** relates to Mandela's words, **B** relates to Mbeki's words, **C** relates to Zuma's words, and **D** relates to Ramaphosa's words.", fig.width = 10, fig.height = 6}
+To find the top 20 words used per president, each president's name was filtered, followed by a 'word' tokenisation, lower case string detection using the matching pattern '[a-z]', exclusion of stop words (i.e, prepositions and connecting words) from the SMART lexicon of the `tidytext` library and of course a descending count and slice of the top 20 words. This process resulted as @fig-top_20_words_PP.
+
+```{r fig-top_20_words_PP, message=FALSE, warning=FALSE, results='hide', echo=FALSE, fig.align='center', fig.cap="Top 20 words used by each president. **A** relates to Mandela's words, **B** relates to Mbeki's words, **C** relates to Zuma's words, and **D** relates to Ramaphosa's words.", fig.width = 10, fig.height = 7, fig.pos="h"}
 # combining above plots in one figure
 cowplot::plot_grid(common_words_Mandela, common_words_Mbeki,
                     common_words_Zuma, common_words_Ramaphosa,
@@ -218,12 +233,29 @@ cowplot::plot_grid(common_words_Mandela, common_words_Mbeki,
 ```
 
 
+It was quite obvious that the words like government, people, public, south, national, development, african, economic and more would appear as top 20 words for all the presidents. Apart from that, based on the words of Mandela, he really demonstrated a presidency that was committed to public service, inclusivity, community building, and addressing a range of social, economic, and security-related challenges. Mandela's leadership was marked by a dedication to nation-building, reconciliation, and addressing the needs of the people. Based on the top 20 words from Mbeki, it seemed like his presidency was marked by a commitment to improving public services, addressing social issues, promoting economic growth and development, and addressing significant challenges. His top 20 words were not that meaningful because that is basically what all presidents would want to achieve in a society. Among the top 20 words of Zuma, the ones that really stood out was 'water' as during his presidency, South Africa was dealing with some water crisis. Ramaphosa's top 20 words revealed a lot about his personality. He is a businessman, so his approach as president was very business-oriented. He seemed to have prioritised economic development and social welfare during his term as president. Due to all presidents having the same goals and dealing with more or less similar unresolved issues over the years, similar words were present in their speeches which would make prediction from their speeches quite challenging.
 
+## Data Variation Models {#sec-data_var}
 
-@Garnier2007 sjgsflkjlsknn jk kdfd kfkfl.
-FDLGDFLKdfkjnslfgj jglfkjl kfjgl kg lk [@Garnier2007].
+Prior to creating the different data variation, a bag of 200 most frequent words was generated by first tokenised the SONA dataset into words while detecting lower case strings only, and excluding stop words, followed by a top 200 count. Then the dataset was tokenised into sentences after which a sentence ID was mutated to the dataset. The new dataset was now in the form where each row represents a sentence mentioned by a president whereby each sentence would uniquely be identified by the sentence ID. This dataset's format was the main input for its subsequent variations highlighted below.
 
-# Results & Discussions
+### Bag of words (BOW) Model {#sec-BOW}
+
+The new dataset with sentences was further tokenised into words where again the stop words were filtered out and only lower case strings were detected. The initial bag of frequent words prepared were then inner joined to the latter. That step dropped any words from each sentence with none of the 200 top words. Furthermore, the BOW model was achieved by just counting the number of times each of the top 200 words was used in each sentence. The BOW model was expectedly quite a sparse dataset where each column was represented by the bag of 200 most frequent words. One issue with that dataset was its uniformity (i.e, each president was grouped in order) due to how it was created while using function like `group_by()`. According to @row_shuffling_MEDIUM, it is necessary to shuffle the rows of the dataset so that variance is minimised and generalisability can be establised upon modelling. Therefore, the rows were randomly shuffled using the `sample()` function from `base R`.
+
+### TF-IDF on BOW Model
+
+As its name suggests, term frequency inverse document frequency (TF-IDF) is an approach where the values for each word in a document is computed through an inverse proportion of the frequency of the word in a particular document to the percentage of words appearance in any documents [@ramos2003using]. The mathematical formula for a TF-IDF calculation is given by: $$ w_d = f_{w,d} \times log \left(\frac{|D|}{f_{w,D}}\right) $$ where,
+
+* $w$ = word;
+* $D$ = document collection or corpus;
+* $d$ = individual document, where $\{d \in D\}$;
+* $f_{w,d}$ = frequency of $w$ in $d$;
+* $|D|$ = size of the corpus [@ramos2003using].
+
+The $log \left(\frac{|D|}{f_{w,D}}\right)$ lies between 1 and a very small constant $c$, implies that $w$ is relatively common over the entire collection of document while still holding some validity throughout $D$ [@ramos2003using]. So, the second data variation was created, by applying TF-IDF to the previous BOW model (annotated as TF-IDF (BOW) in subsequent sections), and in R it is as simple as to just utilise the `bind_tf_idf()` function from the `tidytext` library. Finally, once again, the rows of the dataset were randomly shuffled as argued in @sec-BOW.
+
+### Dealing with Imbalanced Data
 
 ```{r Dataset variations, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
 # Tokenise by sentence
@@ -317,6 +349,63 @@ DS_tfidf_200 <- DS_tfidf_200[sample(nrow(DS_tfidf_200)),] # shuffle rows to make
 # table(DS_tfidf_200$president_13)
 # str(DS_tfidf_200)
 ```
+
+@tbl-BOW_TFIDF_imbalanced tabulated the totality of sentences appeared per president for both BOW and TF-IDF (BOW)
+```{r tbl-BOW_TFIDF_imbalanced, echo=FALSE}
+#| label: tbl-BOW_TFIDF_imbalanced
+#| tbl-cap: "Extract of the number of sentences appeared per president for both BOW and TF-IDF (BOW) models."
+
+a <- table(bow_200$president_13)
+b <- table(tfidf_200$president_13)
+d <- rbind(a,b)
+rownames(d) <- c("BOW", "TF-IDF (BOW)")
+
+kable(d)
+```
+models and we observed that in both cases the data was very imbalanced. The 2 most simplest ways to fix this problem is by applying up-sampling or down-sampling. Up-sampling is when the data in the minority classes are randomly duplicated or recreated to match the number of sample in that majority class. For instance, an up-sampled (US) version of the TF-IDF (BOW) (annotated as US TF-IDF (BOW)) model would unify all the entries of the other presidents to 10420, as Mbeki had the highest number of sentences. Similarly, down-sampling is when the data in the majority classes are randomly omitted to match the number of sample in that minority class. For instance, a down-sampled (DS) version of the BOW model (annotated as DS BOW) would unify all the entries of the other presidents to 1507, as Mandela had the lowest number of sentences. Both up-sampling and down-sampling have their pros and cons. For example, up-sampling can cause over-fitting but down-sampling can under-fitting due to limited information for model training. So, on the 2 model variations that we already had as explained in @sec-data_var, up-sampling and down-sampling have been applied on each. That led us into having 6 data model variations in total. 
+
+
+## Predictive Models {#sec-PM}
+
+The main intention behind this research was to be able to predict the presidents in question based on their speeches. Therefore, 3 robust machine learning models such as the deep feedforward neural network (NN), multinomial logistic regression (MLR) and support vector machine (SVM) were picked to execute the task. The following sections concisely explain each algorithm. Although hyper-parameter tuning is highly recommended, it was not performed due to time constraint except for the MLR model. Therefore, the hyper-parameters were chosen through multiple manual execution and evaluation of the models  (or a manual hyper-parameter tuning). Throughout the modelling process, each data variation was split into 70% training set and 30% test set. The training set was scaled separately and then the test set was scaled but based on the unscaled training data's mean and standard deviation. Additionally, for the NN application only, the dataset had to undergo through the process of one hot encoding using the `to_categorical` function, in preparation to be used with the `keras` library. Note that the explanation of each algorithm below was applied to the 6 data variations derived as explained in @sec-data_var.
+
+### Deep feedforward Neural Network (NN)
+
+In a nutshell, NN functions just like our brain where it takes a certain number of inputs and assign weights to each while distributing those in a network of intermediary outputs, assign further weights and repeat this process if necessary, until the final collection of decision/output is obtained. More formally, it contains of a layer of input with all the predictor variables, number of neurons for each hidden layer and the output layer containing the possible predictions. There are multiple activation functions which can be applied in the hidden layers and output layer. Initially, the NN models were executed using the rectified linear unit (ReLU) in the hidden layers but was found that the hyperbolic tanh activation function performed better. Mathematically, the hyperbolic tanh function can be expressed as: $$ f(x) = \frac{2}{(1+e^{-2x})}-1 $$ [@sharma2017activation]. Graphically, it is a sigmoid function symmetric around the origin and ranges from -1 to 1. Since we were dealing with a multi-class classification, the softmax was the appropriate activation function for the output layer. Softmax is a generalised sigmoidal function [@almurieb2020softmax] or can be seen as multiple sigmoid functions combined [@sharma2017activation]. Sigmoid function is generally used for binary classification as the function returns a value between 0 and 1 [@sharma2017activation]. Thus, its generalisability (the so-called softmax) makes it more flexible which in turn allows multi-class classification. Without any explanation, the equation for the softmax function is defined as follows: $$ \sigma(x)_i = \frac{e^{x_i}}{\sum_{l=1}^d e^{x'_l}} $$, and more information can be found in @almurieb2020softmax.
+
+Moreover, the deep feedforward NN was applied using the `keras` library with the following steps:
+
+* Create an empty model using the `keras_model_sequential()` function.
+* Define the model:
+  + The architecture contained 200 inputs, with a hidden layer of 500 units/neurons and tanh activation function followed by a      dropout regulariser at a 0.1 rate. The second hidden layer had 300 units/neurons with the same activation function and          again the dropout regulariser at the same rate. Finally, the output layer contained 4 units\neurons with a softmax              activation function.
+* Compile the model using the `compile()` function:
+  + At a bare minimum, the categorical crossentropy was chosen as loss function with the 'adam' optimiser at a learning rate of     0.01. The metric to be returned was selected to 'accuracy'.
+* Train the model using the `fit()` function:
+  + The algorithm was set to iterate for 100 epochs in small batches of 30. The validation set used was 20% with shuffle set to     true for more generalisability.
+* Evaluate model using the `evaluate()` function on the test set.
+
+### Multinomial Logistic Regression (MLR)
+
+Logistic regression model are ideal for binary classification as it normally assumes the categorical response variable as success (1) or failure (0) [@el2012application]. A slight modification to this algorithm gives rise to the so-called multinomial logistic regression. Briefly, MLR revolves around the same idea of logarithm of the odds called logit just as logistic regression, but simply extended to handle multiple explanatory variables [@el2012application]. The MLR was quite simply implemented using the `glmnet()` function from the `glmnet` library, while invoking a lasso (L1) regularisation to minimise overfitting. Lasso regularisation can shrunk some coefficients exactly to 0 indicating their non-statistically significant nature of that predictor variable. Therefore, it automatically excludes them from the model. To find the optimal $\lambda$, a 10-fold cross validation was performed using the `cv.glmnet()` function. 
+
+### Support Vector Machine (SVM)
+
+In short, SVM sprouts from support vector classifiers (SVC) where the main idea is to separate various classes using decision boundaries whereby for a binary classification the SVC typically contains 2 margins. Of course, this can be uplifted to multi-class classification where the SVC would contain N number of margins/hyperplanes. SVM aims to maximise the margin so that the concept of variance-bias trade off is satisfied. That is, while a tight margin is subject to overfitting, a wide one introduces more generalisability. As opposed to SVC, SVM has an additional function which implement a kernel trick, facilitating non-linear classification by enlarging the feature space and improving computational efficiency [@james2013introduction]. SVM was applied using the `svm()` function from the `e1071` library. During the implementation of SVM, after several manual testing and evaluation we established on maintaining a cost of 1 with a radial kernel trick. According to @patle2013svm, radial kernel is one of the most popular kernal functions which informally speaking, adds a 'bump' around each data points. Mathematically, the kernel function is represented as: $$K(x,x_i) = e^{-\gamma \left\|x-x_i\right\|^2}$$, where $\gamma > 0$ [@patle2013svm].
+
+## Performance Evaluation Metrics
+
+Although all the models were evaluated using the conventional training and test accuracy, the imbalanced datasets were evaluated using the Matthew's Correlation Coefficient (MCC). Because, according to @Chicco_and_Jurman_2020, MCC is the most reliable metric when it comes to imbalance data, as it takes this specific nature into account. MCC is typically performed on binary classification and is quite straight forward. However, although MCC is still possible to compute for multi-class classification, its mathematical formulation is relatively slightly complicated. Let $C$ be the confusion matrix for class $k$, mathematically, the MCC for multi-class classification is computed as follows: $$ MCC = \frac{c \times s - \sum_k^K p_k \times t_k }{\sqrt{(s^2-\sum_k^K p_k^2)(s^2-\sum_k^Kt_k^2)}} $$ where,
+
+* $c = \sum_k^K C_{kk}$, the total number of correct predictions (sum of diagonal); 
+* $s = \sum_i^K \sum_j^K C_{ij}$, the total number of observations;
+* $p_k = \sum_i^K C_{ki}$, the number of times the class k was predicted (column total);
+* $t_k = \sum_i^K C_{ik}$, the number of times the class k truly occurred (row total) [@grandini2020metrics].
+
+The coefficient ranges from -1 to 1 and is evaluated as the standard correlation matrix. In R, it was simply calculated using the `mcc()` function from the `mltools` library.
+
+# Results & Discussions
+
+## Inter-Model Comparison
 
 ```{r Data splits for all models, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
 
@@ -809,6 +898,7 @@ model_DS_tfidf_200 %>% compile(
 ```
 
 ```{r Load all 18 models and SVM predictions, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
+set.seed(1)
 load("Rdata/NN_bow_200.Rdata")
 load("Rdata/NN_US_bow_200.Rdata")
 load("Rdata/NN_DS_bow_200.Rdata")
@@ -1033,7 +1123,8 @@ MCC <-  c(round(MCC_bow_200, 3), "-", "-", round(MCC_tfidf_200,3), "-", "-", " "
 
 Train_acc <- c(round(NN_bow_200_train_accuracy,3), round(NN_US_bow_200_train_accuracy,3), round(NN_DS_bow_200_train_accuracy,3), round(NN_tfidf_200_train_accuracy,3), round(NN_US_tfidf_200_train_accuracy,3), round(NN_DS_tfidf_200_train_accuracy,3), " ", round(mlr_bow_200_train_accuracy,3), round(mlr_US_bow_200_train_accuracy,3), round(mlr_DS_bow_200_train_accuracy,3), round(mlr_tfidf_200_train_accuracy,3), round(mlr_US_tfidf_200_train_accuracy,3), round(mlr_DS_tfidf_200_train_accuracy,3), " ", round(svm_bow_200_train_accuracy,3), round(svm_US_bow_200_train_accuracy,3), round(svm_DS_bow_200_train_accuracy,3), round(svm_tfidf_200_train_accuracy,3), round(svm_US_tfidf_200_train_accuracy,3), round(svm_DS_tfidf_200_train_accuracy,3))
            
-Test_acc <- c(round(NN_bow_200_test_accuracy[[2]],3), round(NN_US_bow_200_test_accuracy[[2]],3), round(NN_DS_bow_200_test_accuracy[[2]],3), round(NN_tfidf_200_test_accuracy[[2]],3), round(NN_US_tfidf_200_test_accuracy[[2]],3), round(NN_DS_tfidf_200_test_accuracy[[2]],3), " ", round(mlr_bow_200_test_accuracy,3), round(mlr_US_bow_200_test_accuracy,3), round(mlr_DS_bow_200_test_accuracy,3), round(mlr_tfidf_200_test_accuracy,3), round(mlr_US_tfidf_200_test_accuracy,3), round(mlr_DS_tfidf_200_test_accuracy,3), " ", round(svm_bow_200_test_accuracy,3), round(svm_US_bow_200_test_accuracy,3), round(svm_DS_bow_200_test_accuracy,3))
+Test_acc <- c(round(NN_bow_200_test_accuracy[[2]],3), round(NN_US_bow_200_test_accuracy[[2]],3), round(NN_DS_bow_200_test_accuracy[[2]],3), round(NN_tfidf_200_test_accuracy[[2]],3), round(NN_US_tfidf_200_test_accuracy[[2]],3), round(NN_DS_tfidf_200_test_accuracy[[2]],3), " ", round(mlr_bow_200_test_accuracy,3), round(mlr_US_bow_200_test_accuracy,3), round(mlr_DS_bow_200_test_accuracy,3), round(mlr_tfidf_200_test_accuracy,3), round(mlr_US_tfidf_200_test_accuracy,3), round(mlr_DS_tfidf_200_test_accuracy,3), " ", round(svm_bow_200_test_accuracy,3), round(svm_US_bow_200_test_accuracy,3), round(svm_DS_bow_200_test_accuracy,3),
+round(svm_tfidf_200_test_accuracy,3), round(svm_US_tfidf_200_test_accuracy,3), round(svm_DS_tfidf_200_test_accuracy,3))
 
 results <- cbind(Model, MCC, Train_acc, Test_acc)
 colnames(results) <- c("Model", "MCC", "Training Accuracy", "Test Accuracy")
@@ -1041,16 +1132,30 @@ colnames(results) <- c("Model", "MCC", "Training Accuracy", "Test Accuracy")
 
 ```
 
+The implementation of the 3 machine learning algorithms discussed in @sec-PM on each of the 6 data variations (see @sec-data_var), resulted in 18 outcomes as shown in @tbl-evaluation_metrics_table. A first glimpse on the overall performance metrics, revealed extremely poor accuracies. In fact all the test accuracies were
 ```{r tbl-evaluation_metrics_table, echo=FALSE}
 #| label: tbl-evaluation_metrics_table
-#| tbl-cap: "Topic Summaries"
+#| tbl-cap: "Model performance in predicting the presidents from their speeches using 200 predictor variables. Metrics reported on 18 different models are MCC, training accuracy and test accuracy. Empty cells for MCC is due to application irrelevancy- classes are fully balanced."
 #| tbl-colwidths: [40, 20, 20, 20]
 kable(results, align = "lccc")
 ```
+below 50% and the MCCs also were quite low. In addition, only 5 training accuracies were above 70%. For the unbalanced data, SVM has definitely demonstrated as best candidate due to its relatively high MCC (`r round(svm_bow_200_mcc,3)`). Although, the best performer according to training accuracy kept on altering among each group of models, the models applied on the DS TF-IDF (BOW) were consistently the worst throughout each group of models. Regarding the test accuracy, the family of NN showed very poor results and for both the MLR and SVM, the test accuracy were around the same values. Throughout all the models applied, NN was definitely the poorest performer.
 
-@tbl-evaluation_metrics_table
+## Intra-Model Comparison
+
+Among the family of NN models, the NN applied on the original BOW and the original TF-IDF (BOW) were both extremely poor with MCCs of `r round(MCC_bow_200, 3)` and `r round(MCC_tfidf_200,3)`, respectively. Albeit, the NN applied on the DS BOW having the highest training accuracy of `r round(NN_DS_bow_200_train_accuracy,3)`, its test accuracy (`r round(NN_DS_bow_200_test_accuracy[[2]],3)`) was the poorest. This is a very good example showing the complexity of the model being high, biased and therefore obtaining a very good training accuracy. Due to its poor biased-variance trade off, in this case overfitting on the training set, the test error became really high on the unseen test data. Surprisingly, the NN model applied on the DS TF-IDF with the lowest training accuracy (`r round(NN_DS_tfidf_200_train_accuracy,3)`) had relatively one of the highest test accuracy (`r round(NN_DS_tfidf_200_test_accuracy[[2]],3)`).
+
+Amid the family of MLR models, the MLR applied on the original BOW and the original TF-IDF (BOW) were even worse with MCCs of `r round(bow_200_mlr_mcc,3)` and `r round(tfidf_200_mlr_mcc, 3)`, respectively. However, the MLR applied on the original BOW had relatively the largest training and test accuracy  of `r round(mlr_bow_200_train_accuracy,3)` and `r round(mlr_bow_200_test_accuracy,3)`, respectively. Furthermore, the MLR on the US TF-IDF (BOW) had the lowest performance with a training accuracy of `r round(mlr_US_tfidf_200_train_accuracy,3)`. It could also be observed that the training and test accuracies were fairly consistent among each other, meaning that the biased-variance trade off was quite balanced. 
+
+Last but not least, within the family of SVM models, the SVM applied on the original BOW had a better MCC (`r round(svm_bow_200_mcc,3)`) than the original TF-IDF (BOW) one (`r round(svm_tfidf_200_mcc,3)`). SVM onto the DS BOW dataset highlighted the highest training accuracy of `r round(svm_DS_bow_200_train_accuracy,3)` which pertained to a test accuracy of `r round(svm_DS_bow_200_test_accuracy,3)`. The lowest training and test accuracy were `r round(svm_DS_tfidf_200_train_accuracy,3)` and `r round(svm_DS_tfidf_200_test_accuracy,3)`, respectively, for the SVM applied on DS TF-IDF (BOW). The non TF-IDF dataset seemed to have performed better both in terms of training and test accuracy.
 
 # Conclusion
+
+The prediction of presidents based on their speeches revealed several important findings. Firstly, data variations fed into the models have quite an impact on the predictive outcomes. Dealing with imbalanced data by applying up-sampling or down-sampling strategies do not always ensure good results upon performance evaluation. Although, all the machine learning models used in this project are generally claimed to be robust, all of them failed to produce a robust model to predict the presidents from their speeches. The low accuracies throughout mean that perhaps these models were not appropriate for the variations of this dataset or perhaps the variations of the SONA dataset were not at their best state yet. Moreover, SVM and MLR showed very similar performance both in terms of training and test accuracy. The NNs had the worst test accuracies throughout.
+
+# Recommendations
+
+Look into developing new strategies for the data variations so that the predictions can improve. Embark on more advanced deep learning algorithms such as convolution neural network (CNN) or recurrent neural network (RNN) for an even more robust model. Lastly, find algorithms which can deal with sparse dataset fairly well.
 
 # References {.unnumbered}
 
